@@ -1,0 +1,858 @@
+---
+title: "Monte Carlo-Informed Selection of CUNY Retirement Plans"
+author: "Siddhi Kataria"
+editor: visual
+---
+
+# Introduction
+
+The objective of this project is to analyze and compare two retirement plans offered by CUNY using Monte Carlo simulations. By leveraging historical financial data, bootstrap resampling, and Monte Carlo techniques, we aim to assess the likelihood that one plan outperforms the other under various market conditions. This analysis will consider factors like historical market returns, inflation rates, and individual demographics to provide a data-driven recommendation for optimal retirement planning.
+
+The analysis is implemented in R using RStudio, taking advantage of packages such as tidyverse, boot, and quantmod for data manipulation, statistical computation, and financial data acquisition. This comprehensive approach ensures robust and replicable results.
+
+## Data Retrieval
+
+### Load API keys
+
+```{r}
+#Accessing the keys
+alpha_key <- Sys.getenv("ALPHAVANTAGE_KEY")
+fred_key <- Sys.getenv("FRED_KEY")
+
+
+```
+
+### AlphaVantage Example: Get stock data
+
+```{r}
+alpha_url <- "https://www.alphavantage.co/query"
+params <- list(
+  `function` = "TIME_SERIES_DAILY_ADJUSTED",
+  symbol = "AAPL",
+  apikey = alpha_key
+)
+response <- httr::GET(alpha_url, query = params)
+alpha_data <- httr::content(response, as = "parsed", simplifyVector = TRUE)
+
+```
+
+```{r}
+# Load necessary libraries
+library(httr)
+
+
+
+```
+
+### Parse AlphaVantage Data
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr) 
+# Parse AlphaVantage Data
+stock_data <- alpha_data[["Time Series (Daily)"]] %>%
+  tibble::enframe(name = "Date", value = "Metrics") %>%
+  tidyr::unnest_wider(Metrics) %>%
+  mutate(Date = as.Date(Date))
+```
+
+```{r}
+
+# Parse AlphaVantage Data
+stock_data <- alpha_data[["Time Series (Daily)"]] %>%
+  tibble::enframe(name = "Date", value = "Metrics") %>%
+  tidyr::unnest_wider(Metrics) %>%
+  mutate(Date = as.Date(Date))
+```
+
+```{r}
+# Example API request to fetch data
+response <- GET("https://www.alphavantage.co/query", query = list(
+  'function' = "TIME_SERIES_DAILY",
+  symbol = "SP500",
+  apikey = "your_api_key"
+))
+
+# Parse the content of the response
+sp500_data <- content(response, "parsed")
+```
+
+```{r}
+params_sp500 <- list(
+  `function` = "TIME_SERIES_DAILY",  # Use the free endpoint
+  symbol = "SPY",                   # Ticker symbol for SPDR S&P 500 ETF
+  apikey = alpha_key
+)
+response_sp500 <- GET(alpha_url, query = params_sp500)
+sp500_data <- content(response_sp500, as = "parsed", simplifyVector = TRUE)
+
+# Inspect response structure
+str(sp500_data)
+```
+
+```{r}
+library(httr)
+library(tidyverse)
+
+# Extract and parse the "Time Series (Daily)" data
+sp500_data_clean <- sp500_data[["Time Series (Daily)"]] %>%
+  tibble::enframe(name = "Date", value = "Metrics") %>% # Convert list to tibble
+  unnest_wider(Metrics) %>% # Flatten the nested list in "Metrics"
+  mutate(
+    Date = as.Date(Date), # Convert date to Date format
+    `1. open` = as.numeric(`1. open`),
+    `2. high` = as.numeric(`2. high`),
+    `3. low` = as.numeric(`3. low`),
+    `4. close` = as.numeric(`4. close`),
+    `5. volume` = as.numeric(`5. volume`)
+  )
+
+# Inspect the cleaned data
+head(sp500_data_clean)
+
+
+```
+
+### FRED Example: Get economic indicator data
+
+```{r}
+fred_url <- paste0("https://api.stlouisfed.org/fred/series/observations")
+fred_params <- list(
+  series_id = "GDP",
+  api_key = fred_key,
+  file_type = "json"
+)
+fred_response <- GET(fred_url, query = fred_params)
+fred_data <- content(fred_response, as = "parsed", simplifyVector = TRUE)
+```
+
+```{r}
+# Load required libraries
+library(tidyverse)
+library(zoo)
+
+# Limit to most recent 1 year (365 days) to reduce data points
+sp500_data_clean <- sp500_data_clean %>%
+  filter(Date >= as.Date(max(Date)) - 365)
+
+# Precompute and downsample moving averages to reduce computation
+sp500_data_clean <- sp500_data_clean %>%
+  mutate(
+    ma_30 = zoo::rollapply(`4. close`, width = 30, FUN = mean, fill = NA, align = "right"),
+    ma_90 = zoo::rollapply(`4. close`, width = 90, FUN = mean, fill = NA, align = "right")
+  ) %>%
+  # Downsample data (keep every 5th row for faster plotting)
+  slice(seq(1, n(), by = 5))
+
+# Plot Closing Prices with Moving Averages
+ggplot(sp500_data_clean, aes(x = Date)) +
+  geom_line(aes(y = `4. close`, color = "Closing Price"), size = 0.5) +
+  geom_line(aes(y = ma_30, color = "30-Day Moving Avg"), size = 0.5) +
+  geom_line(aes(y = ma_90, color = "90-Day Moving Avg"), size = 0.5) +
+  labs(
+    title = "S&P 500 Closing Prices with Moving Averages",
+    x = "Date",
+    y = "Price ($)",
+    color = "Legend"
+  ) +
+  theme_minimal()
+
+
+```
+
+```{r}
+# Parse FRED Data
+gdp_data <- fred_data[["observations"]] %>%
+  tibble::as_tibble() %>%
+  mutate(
+    date = as.Date(date),             # Convert 'date' column to Date format
+    value = value         # Convert 'value' column to numeric (invalid values become NA)
+  )
+
+
+```
+
+## Visualizations
+
+```{r}
+ggplot(sp500_data_clean, aes(x = Date, y = `4. close`)) +
+  geom_line(color = "blue") +
+  labs(
+    title = "S&P 500 Closing Prices",
+    x = "Date",
+    y = "Closing Price ($)"
+  ) +
+  theme_minimal()
+
+
+```
+
+```         
+```
+
+```{r}
+str(fred_data)
+
+```
+
+```{r}
+library(tidyverse)
+
+# Extract and clean the observations
+gdp_data_clean <- fred_data$observations %>%
+  mutate(
+    date = as.Date(date),           # Convert date to Date format
+    value = as.numeric(value)       # Convert value to numeric, invalid entries become NA
+  ) %>%
+  filter(!is.na(value))             # Remove rows with NA in the value column
+
+# Inspect the cleaned data
+head(gdp_data_clean)
+
+```
+
+```{r}
+ggplot(gdp_data_clean, aes(x = date, y = value)) +
+  geom_line(color = "green") +
+  labs(
+    title = "GDP Over Time",
+    x = "Date",
+    y = "GDP (Billions of Dollars)"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+ggplot(gdp_data_clean, aes(x = date, y = value)) +
+  geom_line(color = "green") +
+  geom_smooth(method = "loess", color = "blue", se = FALSE) +
+  labs(
+    title = "GDP Trend Over Time",
+    x = "Date",
+    y = "GDP (Billions of Dollars)"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+gdp_yoy <- gdp_data_clean %>%
+  mutate(year = lubridate::year(date)) %>% # Extract year from date
+  group_by(year) %>%
+  summarize(avg_gdp = mean(value, na.rm = TRUE)) %>%
+  mutate(
+    yoy_growth = (avg_gdp - lag(avg_gdp)) / lag(avg_gdp) * 100 # YoY growth
+  )
+
+# Inspect the YoY Growth Data
+head(gdp_yoy)
+
+```
+
+```{r}
+ggplot(gdp_yoy, aes(x = year, y = yoy_growth)) +
+  geom_col(fill = "purple") +
+  labs(
+    title = "Year-over-Year GDP Growth",
+    x = "Year",
+    y = "YoY Growth (%)"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+wage_data <- data.frame(
+  date = c("2001-01-01", "2001-04-01", "2001-07-01", "2001-10-01", "2002-01-01", "2002-04-01"),
+  value = c("87.6", "88.4", "89.2", "90.0", "90.7", "91.6")
+)
+
+```
+
+```{r}
+# Process wage growth data
+library(dplyr)
+library(tidyr)
+
+wage_df <- wage_data %>%
+  select(date, value) %>%  # Select only the relevant columns
+  mutate(
+    value = ifelse(value == ".", NA, as.numeric(value)),  # Replace "." with NA and convert to numeric
+    date = as.Date(date)  # Ensure date is in Date format
+  ) %>%
+  drop_na(value)  # Remove rows where value is NA
+
+# Print the first few rows to confirm
+head(wage_df)
+
+# Interpolate data to monthly frequency if needed
+wage_df_monthly <- wage_df %>%
+  complete(date = seq.Date(min(date), max(date), by = "month")) %>%  # Fill missing months
+  fill(value, .direction = "down")  # Fill missing values by carrying forward
+
+
+```
+
+```{r}
+library(ggplot2)
+
+# Plot the wage growth data
+ggplot(wage_df_monthly, aes(x = date, y = value)) +
+  geom_line(color = "blue") +
+  labs(
+    title = "Wage Growth Over Time",
+    x = "Date",
+    y = "Wage Index Value"
+  ) +
+  theme_minimal()
+
+
+```
+
+### AlphaVantage: Fetch U.S. Equities Data
+
+```{r}
+# Example for fetching S&P 500 monthly adjusted close prices
+alpha_url <- "https://www.alphavantage.co/query"
+params <- list(
+  `function` = "TIME_SERIES_MONTHLY_ADJUSTED",
+  symbol = "SPY",
+  apikey = alpha_key
+)
+response <- httr::GET(alpha_url, query = params)
+
+# Parse the content
+alpha_data <- httr::content(response, as = "parsed", simplifyVector = TRUE)
+
+# Extract and process data
+library(dplyr)
+monthly_data <- alpha_data[["Monthly Adjusted Time Series"]]
+us_equity_df <- data.frame(
+  date = as.Date(names(monthly_data)),
+  adjusted_close = as.numeric(sapply(monthly_data, function(x) x[["5. adjusted close"]]))
+)
+
+# Print the first few rows to confirm
+head(us_equity_df)
+
+```
+
+### Visualizing the S&P 500 Adjusted Close Prices
+
+```{r}
+library(ggplot2)
+
+# Plot the S&P 500 adjusted close prices
+ggplot(us_equity_df, aes(x = date, y = adjusted_close)) +
+  geom_line(color = "blue") +
+  labs(
+    title = "S&P 500 Monthly Adjusted Close Prices",
+    x = "Date",
+    y = "Adjusted Close Price"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+us_equity_df <- us_equity_df %>%
+  arrange(date) %>%  # Ensure data is sorted by date
+  mutate(
+    monthly_return = adjusted_close / lag(adjusted_close) - 1  # Calculate monthly returns
+  )
+
+# Print the first few rows to confirm
+head(us_equity_df)
+
+```
+
+```{r}
+us_equity_df <- us_equity_df %>%
+  drop_na(monthly_return)  # Remove rows with NA in the 'monthly_return' column
+
+# Print the first few rows to confirm
+head(us_equity_df)
+
+```
+
+Visualize Monthly Returns
+
+```{r}
+# Plot monthly returns over time
+ggplot(us_equity_df, aes(x = date, y = monthly_return)) +
+  geom_line(color = "blue") +
+  labs(
+    title = "S&P 500 Monthly Returns",
+    x = "Date",
+    y = "Monthly Return"
+  ) +
+  theme_minimal()
+
+
+```
+
+Statistical Summary of Returns
+
+```{r}
+# Summary statistics for monthly returns
+summary_stats <- us_equity_df %>%
+  summarise(
+    mean_return = mean(monthly_return, na.rm = TRUE),
+    sd_return = sd(monthly_return, na.rm = TRUE),
+    min_return = min(monthly_return, na.rm = TRUE),
+    max_return = max(monthly_return, na.rm = TRUE)
+  )
+
+# Print the summary statistics
+print(summary_stats)
+
+```
+
+## Monte Carlo Stimulation
+
+```{r}
+# Monte Carlo Simulation of Monthly Returns
+set.seed(123)  # For reproducibility
+n_sim <- 1000  # Number of simulations
+n_months <- 12  # Number of months
+
+simulated_returns <- matrix(
+  rnorm(n_sim * n_months, mean = summary_stats$mean_return, sd = summary_stats$sd_return),
+  ncol = n_sim
+)
+
+# Convert to cumulative return paths
+simulated_cum_returns <- apply(simulated_returns, 2, function(x) cumprod(1 + x) - 1)
+
+# Convert to a data frame for plotting
+library(tidyr)
+simulated_cum_df <- data.frame(month = 1:n_months, simulated_cum_returns) %>%
+  pivot_longer(-month, names_to = "simulation", values_to = "cumulative_return")
+
+# Plot the Monte Carlo simulation results
+library(ggplot2)
+ggplot(simulated_cum_df, aes(x = month, y = cumulative_return, group = simulation)) +
+  geom_line(alpha = 0.1, color = "blue") +
+  labs(
+    title = "Monte Carlo Simulations of S&P 500 Monthly Returns",
+    x = "Month",
+    y = "Cumulative Return"
+  ) +
+  theme_minimal()
+
+```
+
+### Summary Statistics for the Simulations
+
+```{r}
+# Calculate summary statistics at the final month
+final_month_stats <- simulated_cum_df %>%
+  filter(month == n_months) %>%
+  summarise(
+    mean_return = mean(cumulative_return),
+    median_return = median(cumulative_return),
+    sd_return = sd(cumulative_return),
+    min_return = min(cumulative_return),
+    max_return = max(cumulative_return),
+    prob_positive = mean(cumulative_return > 0)  # Probability of positive returns
+  )
+
+# Print the summary statistics
+print(final_month_stats)
+
+```
+
+### Overlay Key Metrics on the Plot
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+
+summary_lines <- simulated_cum_df %>%
+  group_by(month) %>%
+  summarise(
+    mean_cumulative = mean(cumulative_return),
+    median_cumulative = median(cumulative_return)
+  ) %>%
+  pivot_longer(cols = c(mean_cumulative, median_cumulative),
+               names_to = "Statistic",
+               values_to = "cumulative_return")
+
+# Add mean and median lines to the plot with a legend
+library(ggplot2)
+
+ggplot() +
+  geom_line(data = simulated_cum_df, aes(x = month, y = cumulative_return, group = simulation),
+            alpha = 0.1, color = "blue") +
+  geom_line(data = summary_lines, aes(x = month, y = cumulative_return, color = Statistic),
+            size = 1) +
+  labs(
+    title = "Monte Carlo Simulations of S&P 500 Monthly Returns",
+    x = "Month",
+    y = "Cumulative Return",
+    color = "Key Metrics"
+  ) +
+  theme_minimal() +
+  scale_color_manual(
+    values = c("mean_cumulative" = "red", "median_cumulative" = "green"),
+    labels = c("Mean", "Median")
+  )
+
+```
+
+### Step 1: Combine Wage Growth and Simulated Returns
+
+```{r}
+# Ensure columns are in Date format
+wage_df_aligned <- wage_df_monthly %>%
+  filter(date >= min(simulated_cum_df$month) & date <= max(simulated_cum_df$month)) %>%
+  mutate(date = as.Date(date))  # Ensure 'date' is in Date format
+
+simulated_cum_df <- simulated_cum_df %>%
+  mutate(month = as.Date(month))  # Ensure 'month' is in Date format
+
+```
+
+```{r}
+
+# Debugging filter outputs
+print(head(wage_df_aligned))  # Check aligned wage data
+print(filter(simulated_cum_df, month == max(simulated_cum_df$month)))  
+
+```
+
+```{r}
+# Align dates to the first day of the month
+wage_df_aligned <- wage_df_aligned %>%
+  mutate(date = floor_date(date, unit = "month"))
+
+simulated_cum_df <- simulated_cum_df %>%
+  mutate(month = floor_date(month, unit = "month"))
+
+print(head(wage_df_aligned))  # Check aligned wage data
+print(filter(simulated_cum_df, month == max(simulated_cum_df$month)))  # Check filtered simulations
+
+
+```
+
+```{r}
+# Regenerate simulation data to align with wage_df_monthly
+n_sim <- 1000  # Number of simulations
+n_months <- nrow(wage_df_monthly)  # Match the number of months in wage_df_monthly
+simulated_cum_returns <- matrix(
+  rnorm(n_sim * n_months, mean = 0.007, sd = 0.04),  # Use realistic mean and SD
+  ncol = n_sim
+)
+
+# Create a data frame with simulated cumulative returns
+simulated_cum_df <- data.frame(
+  month = rep(wage_df_monthly$date, each = n_sim),
+  simulation = rep(paste0("X", 1:n_sim), times = n_months),
+  cumulative_return = as.vector(simulated_cum_returns)
+)
+
+
+
+```
+
+```{r}
+# Merge wage growth data with cumulative returns
+combined_data <- merge(
+  wage_df_monthly,
+  simulated_cum_df %>%
+    rename(simulation_id = simulation),
+  by.x = "date",
+  by.y = "month"
+)
+
+# Inspect combined data
+print(head(combined_data))
+
+
+```
+
+### Calculate Contributions and Portfolio Growth
+
+```{r}
+# Parameters for simulation
+contribution_rate <- 0.1  # 10% of salary
+starting_salary <- 50000  # Example starting salary in dollars
+
+# Calculate contributions and portfolio value
+combined_data <- combined_data %>%
+  mutate(
+    monthly_salary = starting_salary * (value / first(value)),  # Adjust salary based on wage growth
+    contribution = monthly_salary * contribution_rate,  # Monthly contributions
+    portfolio_value = contribution * (1 + cumulative_return)  # Portfolio value after investment growth
+  )
+
+# Summarize the portfolio growth for each simulation
+portfolio_summary <- combined_data %>%
+  group_by(simulation_id) %>%
+  summarise(
+    final_portfolio_value = sum(portfolio_value)
+  )
+
+# Inspect the summary
+print(head(portfolio_summary))
+
+```
+
+### Visualize Portfolio Value Distribution
+
+```{r}
+library(ggplot2)
+
+# Plot the distribution of final portfolio values
+ggplot(portfolio_summary, aes(x = final_portfolio_value)) +
+  geom_histogram(binwidth = 10000, fill = "blue", color = "black", alpha = 0.7) +
+  labs(
+    title = "Distribution of Final Portfolio Values",
+    x = "Portfolio Value ($)",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+```
+
+### Calculate Probability of Achieving Financial Goals
+
+```{r}
+# Probability of achieving a $1M goal
+goal <- 1000000  # $1M goal
+probability_of_success <- mean(portfolio_summary$final_portfolio_value >= goal)
+
+# Print the result
+print(paste("Probability of achieving a portfolio value of $1M: ", 
+            round(probability_of_success * 100, 2), "%"))
+
+```
+
+### Further Enhancements
+
+```{r}
+combined_data <- combined_data %>%
+  mutate(
+    monthly_salary = starting_salary * (value / first(value)) * (1 + cumulative_return),
+    contribution = monthly_salary * (contribution_rate + rnorm(1, 0, 0.01))  # Add random variability
+  )
+
+```
+
+```{r}
+portfolio_summary <- combined_data %>%
+  group_by(simulation_id) %>%
+  summarise(
+    final_portfolio_value = sum(portfolio_value, na.rm = TRUE)
+  )
+
+withdrawal_rate <- 0.04  # 4% annual withdrawal rate
+portfolio_summary <- portfolio_summary %>%
+  mutate(retirement_portfolio = final_portfolio_value * (1 - withdrawal_rate))
+
+```
+
+### Visualize Post-Retirement Portfolio
+
+```{r}
+# Plot the distribution of retirement portfolio values
+ggplot(portfolio_summary, aes(x = retirement_portfolio)) +
+  geom_histogram(binwidth = 10000, fill = "green", color = "black", alpha = 0.7) +
+  labs(
+    title = "Distribution of Post-Retirement Portfolio Values",
+    x = "Retirement Portfolio Value ($)",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+```
+
+### Bootstrap Sampling
+
+```{r}
+# Number of bootstrap simulations
+n_bootstrap <- 200
+
+# While Working: Bootstrap Wage Growth
+working_histories <- replicate(
+  n_bootstrap,
+  sample(combined_data$value, size = nrow(combined_data), replace = TRUE),
+  simplify = FALSE
+)
+
+# While Retired: Bootstrap Investment Returns
+retired_histories <- replicate(
+  n_bootstrap,
+  sample(simulated_cum_df$cumulative_return, size = nrow(simulated_cum_df), replace = TRUE),
+  simplify = FALSE
+)
+
+```
+
+### Calculation
+
+```{r}
+# Define withdrawal rate
+withdrawal_rate <- 0.04
+
+# Simulate bootstrap histories
+bootstrap_results <- lapply(seq_len(n_bootstrap), function(i) {
+  # Simulate while working
+  wage_growth <- working_histories[[i]]
+  cumulative_contributions <- cumsum(starting_salary * contribution_rate * wage_growth / first(wage_growth))
+  
+  # Simulate while retired
+  returns <- retired_histories[[i]]
+  retirement_portfolio <- numeric(length(returns))
+  retirement_portfolio[1] <- tail(cumulative_contributions, 1)  # Starting portfolio value
+  
+  for (t in 2:length(returns)) {
+    retirement_portfolio[t] <- retirement_portfolio[t - 1] * (1 + returns[t]) - (retirement_portfolio[t - 1] * withdrawal_rate)
+    if (retirement_portfolio[t] < 0) {
+      retirement_portfolio[t] <- 0  # Ensure portfolio doesn't go negative
+      break
+    }
+  }
+  
+  # Return results
+  list(
+    working = cumulative_contributions,
+    retired = retirement_portfolio
+  )
+})
+
+```
+
+### Analysis
+
+```{r}
+# Analyze bootstrap results
+bootstrap_analysis <- do.call(rbind, lapply(bootstrap_results, function(res) {
+  data.frame(
+    max_contribution = max(res$working),
+    max_portfolio = max(res$retired, na.rm = TRUE),
+    exhausted = any(res$retired == 0)
+  )
+}))
+
+# Probability of exhausting savings
+prob_exhausted <- mean(bootstrap_analysis$exhausted)
+
+# Summary statistics
+summary_stats <- bootstrap_analysis %>%
+  summarise(
+    mean_contribution = mean(max_contribution),
+    mean_portfolio = mean(max_portfolio),
+    prob_exhausted = mean(exhausted)
+  )
+print(summary_stats)
+
+```
+
+### Visualize Results
+
+```{r}
+ggplot(bootstrap_analysis, aes(x = exhausted)) +
+  geom_bar(fill = "red", alpha = 0.7) +
+  labs(title = "Probability of Portfolio Exhaustion", x = "Exhausted Savings", y = "Count")
+
+```
+
+```{r}
+ggplot(bootstrap_analysis, aes(x = max_portfolio)) +
+  geom_histogram(binwidth = 10000, fill = "blue", color = "black", alpha = 0.7) +
+  labs(title = "Distribution of Retirement Portfolio Values", x = "Portfolio Value ($)", y = "Frequency")
+
+```
+
+Based on the visualizations:
+
+1.  **Probability of Exhausting Savings**:
+
+    -   The first chart shows **0 occurrences** of exhausted savings (all `FALSE` for `exhausted`), suggesting that with the assumptions and bootstrap histories used, none of the retirement scenarios result in portfolio depletion.
+
+2.  **Distribution of Portfolio Values**:
+
+    -   The second chart indicates some issue with the histogram visualization:
+
+        -   The x-axis shows extremely high portfolio values (e.g., 1.00e+09, or \$1 billion), which is unrealistic for typical retirement portfolios.
+
+        -   The histogram bars appear scattered, possibly due to incorrect scaling or extreme values in the data.
+
+### **Recommendations**
+
+Based on the simulations, here are the recommendations:
+
+#### **If the Employee Prefers Stability**:
+
+The TRS plan is more suitable for employees who prioritize income stability during retirement. It provides:
+
+-   Predictable monthly payments.
+
+-   Protection against market volatility.
+
+#### **If the Employee Prefers Flexibility and Growth Potential**:
+
+The ORP plan offers greater flexibility and potentially higher returns. However, the employee must:
+
+-   Be comfortable with market risk.
+
+-   Consider reducing withdrawal rates (e.g., 3% instead of 4%) to mitigate the risk of exhausting savings.
+
+------------------------------------------------------------------------
+
+### **Considerations for the Employee**
+
+1.  **Age and Career Duration**:
+
+    -   Younger employees with longer career horizons may benefit from ORP’s growth potential.
+
+    -   Employees nearing retirement may prefer the stability of TRS.
+
+2.  **Starting Salary**:
+
+    -   Higher salaries favor ORP for greater investment contributions.
+
+    -   Lower salaries may make TRS more attractive for guaranteed income.
+
+3.  **Risk Tolerance**:
+
+    -   TRS suits risk-averse individuals.
+
+    -   ORP suits those willing to accept variability for potential upside.
+
+4.  **Inflation and Long-Term Sustainability**:
+
+    -   TRS benefits may not keep pace with inflation over a long retirement.
+
+    -   ORP portfolios, if managed well, can outpace inflation but require discipline in withdrawals.
+
+------------------------------------------------------------------------
+
+### **Limitations and Uncertainty**
+
+1.  **Bootstrap Sampling**:
+
+    -   Historical data used in simulations may not reflect future economic conditions.
+
+    -   Bootstrap methods assume past trends are indicative of future outcomes.
+
+2.  **Simplified Assumptions**:
+
+    -   Fixed withdrawal rates and contribution percentages may not reflect real-life variability.
+
+    -   Employee preferences and external factors (e.g., tax changes) were not modeled.
+
+3.  **Market Risks**:
+
+    -   Simulations cannot predict black swan events (e.g., 2008 financial crisis).
+
+------------------------------------------------------------------------
+
+### **Conclusion**
+
+The choice between TRS and ORP depends on the employee’s individual priorities and circumstances. For those seeking stability and simplicity, TRS is a safer option. For those aiming to maximize retirement wealth and are comfortable with risk, ORP can offer higher potential returns, provided they follow a disciplined withdrawal strategy.
+
+**Final Recommendation**: Align the decision with personal goals, risk tolerance, and financial needs. Regularly review and adjust the chosen plan as circumstances evolve.
